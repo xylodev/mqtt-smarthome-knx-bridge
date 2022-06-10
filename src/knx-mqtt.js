@@ -8,7 +8,7 @@ const { createLogger, format, transports } = require('winston');
 const ets = require('./ets-xml');
 const config = require('./config.js').parse();
 const topicPrefix = config.mqtt.topicPrefix + (config.mqtt.topicPrefix.endsWith('/') ? '' : '/');
-const gadRegExp = new RegExp((topicPrefix || 'knx/') + '(\\d+)\/(\\d+)\/(\\d+)\/(\\w+)(\/([\\w\\d]+))?');
+const gadRegExp = new RegExp((topicPrefix || 'knx/') + '(\\w+)\/(\\d+)\/(\\d+)\/(\\d+)(\/([\\w\\d]+))?');
 const logger = createLogger({
   level: config.loglevel,
   format: format.combine(
@@ -36,15 +36,17 @@ let mqttClient  = mqtt.connect(config.mqtt.url, config.mqtt.options);
 
 mqttClient.on('connect', function () {
   logger.info('MQTT connected');
-  mqttClient.subscribe(topicPrefix + '+/+/+/+');
-  mqttClient.subscribe(topicPrefix + '+/+/+/+/+');
+  mqttClient.subscribe(topicPrefix + 'get/+/+/+');
+  mqttClient.subscribe(topicPrefix + 'get/+/+/+/+');
+  mqttClient.subscribe(topicPrefix + 'set/+/+/+');
+  mqttClient.subscribe(topicPrefix + 'set/+/+/+/+');
 });
 
 mqttClient.on('message', function (topic, message) {
     logger.silly('Received MQTT message on topic %s with value %s', topic, message);
     let gadArray = gadRegExp.exec(topic);
-    let gad = gadArray[1] + "/" + gadArray[2] + "/" + gadArray[3];
-    let command = gadArray[4];
+    let gad = gadArray[2] + "/" + gadArray[3] + "/" + gadArray[4];
+    let command = gadArray[1];
     let dpt = gadArray.length >= 7 ? gadArray[6] : undefined;
     let parsedMessage;
     try {
@@ -54,7 +56,7 @@ mqttClient.on('message', function (topic, message) {
     }
     let isBuffer = parsedMessage !== null && typeof parsedMessage === 'object';
     logger.verbose('Parsed MQTT message into gad %s with command %s, value %j and dpt %s', gad, command, parsedMessage, dpt);
-    if (command === 'write' && isBuffer) {
+    if (command === 'set' && isBuffer) {
         let bitLength = getBitLength(dpt);
         let bufferMessage;
         try {
@@ -63,7 +65,7 @@ mqttClient.on('message', function (topic, message) {
         } catch (err) {
             logger.error('Could not parse buffer %j', parsedMessage);
         }
-    } else if (command === 'write' && !isBuffer) {
+    } else if (command === 'set' && !isBuffer) {
         if (groupAddresses.hasOwnProperty(gad)) {
             try {
                 groupAddresses[gad].endpoint.write(parsedMessage);
@@ -73,14 +75,14 @@ mqttClient.on('message', function (topic, message) {
         } else {
             logger.error('Cannot write non-buffer value do an unknown group address %s. Don\'t know how to convert', gad);
         }
-    } else if (command === 'read') {
+    } else if (command === 'get') {
         if (groupAddresses.hasOwnProperty(gad)) {
             groupAddresses[gad].endpoint.read();
         } else {
             knxConnection.read(gad);
         }
     } else {
-        logger.warn('Unknown KNX command %s', command);
+        logger.warn('Unknown KNX command: %s', command);
     }
 });
 
@@ -113,7 +115,7 @@ let onKnxEvent = function (evt, dst, value, gad) {
       new Date().toISOString().replace(/T/, ' ').replace(/\..+/, ''),
       evt, dst, mqttMessage);
 
-    mqttClient.publish(topicPrefix + dst, mqttMessage, {
+    mqttClient.publish(topicPrefix + 'status/' + dst, mqttMessage, {
         retain: config.mqtt.retain || false
     });
 }
